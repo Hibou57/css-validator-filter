@@ -1,0 +1,305 @@
+#!/usr/bin/env python3
+
+""" Output filer for `org.w3c.css.css.CssValidator` from `css-validator.jar`.
+
+Primarly to be used for IDE/text editor integration.
+
+A sample output from the filter may be:
+
+    Found 2 error(s)
+    index.css:6: Parse error (invalid or unsupported).
+    index.css:13: Property -text-decoration doesn't exist.
+    Found 1 warning(s)
+    index.css:465: Properties for other media might not work for usermedium.
+
+Note if the option `--warning=-1` is passed to the validator, a count of
+warnings may be printed, but no warning message. This is not an error, since
+the validator still output the count of warnings when this option is given
+this value.
+
+Additionally, the exit status is set to 1 if errors were found by the
+validator, since some IDE/text editor are aware of exit codes. The validator
+does not set this exit code otherwise.
+
+The filter supposes the validator output mode is text. If the output format
+from the validator differs in any future version of the validator, this filter
+will need to be updated.
+
+Yannick Duchêne <yannick_duchene@yahoo.fr>, 2017.
+MIT/BSD license.
+
+"""
+
+import os.path
+import re
+import sys
+
+
+# Regular expressions
+# ===================
+
+# These patterns are recognized in the validator’s output. Patterns are for
+# whole lines. Lines not matching any of these patterns are ignored. As soon
+# as `END_PAT` is encountered, the filter stops. The individual patterns
+# are grouped together in `ALL_PATS`.
+
+# End
+END_PAT = r"Valid CSS information(?P<end>)"
+
+# Error(s) count.
+ERR_CNT_PAT = r"Sorry! We found the following errors \((?P<err_cnt>[0-9]+)\)"
+
+# Error line number.
+ERR_LN_PAT = r"Line : (?P<err_ln>[0-9]+) (.+)?"
+
+# Error message.
+ERR_MSG_PAT = r"       (?P<err_msg>.+) : "
+
+# No error
+NO_ERR_PAT = "    Congratulations! No Error Found.(?P<no_err>)"
+
+# Parse error. May happens in place of `ERR_MSG_PAT`.
+PARSE_ERR_PAT = r"       Parse Error(?P<parse_err>)"
+
+# File path.
+PATH_PAT = r"URI : file:(?P<path>.+)"
+
+# Warning(s) count.
+WARN_CNT_PAT = r"Warnings \((?P<warn_cnt>[0-9]+)\)"
+
+# Warning line number and message.
+WARN_LN_MSG_PAT = r"Line : (?P<warn_ln>[0-9]+) -  (?P<warn_msg>.+)"
+
+# Disjunction of all patterns enclosed between `^` and `$`.
+ALL_PATS = (
+    "^" + END_PAT + "$|" +
+    "^" + ERR_CNT_PAT + "$|" +
+    "^" + WARN_LN_MSG_PAT + "$|"  # Must be tested before `ERR_LN_PAT`.
+    "^" + ERR_LN_PAT + "$|" +
+    "^" + ERR_MSG_PAT + "$|" +
+    "^" + NO_ERR_PAT + "$|" +
+    "^" + PARSE_ERR_PAT + "$|" +
+    "^" + PATH_PAT + "$|" +
+    "^" + WARN_CNT_PAT + "$")
+
+# If `END_PAT` is matched, then `match.groupdict()['end']` will be not `None`
+# and its value will be an empty string. If `ERR_CNT_PAT` is matched, then
+# `match.groupdict()['err_cnt']` will be not `None` and its value will be
+# the number of error as string. And so on … This is how the filter knows
+# what matched (if the current line matches anything) and get the relevant
+# value from it.
+SCANNER = re.compile(ALL_PATS)
+
+# If one takes the individual patterns as tokens, then a grammar for
+# the output from the validator as understood by this filter, would be this:
+#
+# (NO_ERR_PAT | (ERR_CNT_PAT (PATH_PAT (ERR_LN_PAT ERR_MSG_PAT)+)+))
+# (WARN_CNT_PAT (PATH_PAT WARN_LN_MSG_PAT+)*)?
+# END_PAT
+
+
+# Output formating
+# ================
+
+def short_path(path):
+    """ Shorter path for more readable output.
+
+    Check it works fine with your text editor output pan. It works fine
+    is your editor output pan is aware of the working directory of then
+    external command it executes. This working directory better be that of
+    the checked file.
+
+    """
+    return os.path.relpath(path)
+
+
+def path_ln_message(path, line_number, message):
+    """ Message formated for your editor output pan.
+
+    Note other text is displayed as-is, not formated.
+
+    """
+    return "%s:%s: %s." % (short_path(path), line_number, message)
+
+
+# The filter proper
+# =================
+
+def matches():
+    """ Generator over `SCANNER` matches.
+
+    Returns a `match.groupdict()` generator.
+
+    """
+    for line in sys.stdin:
+        line = line.rstrip("\n")
+        match = SCANNER.match(line)
+        if match is not None:
+            yield match.groupdict()
+
+
+def iterate_error_messages(path, tokens):
+    """ Iterate over error messages.
+
+    Returns the next token to the caller.
+
+    """
+    empty = True
+    while True:
+        token = next(tokens)
+        if token['err_ln'] is not None:
+            empty = False
+            line_number = token['err_ln']
+            token = next(tokens)
+            if token['err_msg'] is not None:
+                message = token['err_msg']
+                print(path_ln_message(path, line_number, message))
+            elif token['parse_err'] is not None:
+                message = "Parse error (invalid or unsupported)"
+                print(path_ln_message(path, line_number, message))
+            else:
+                raise ValueError
+        else:
+            stop = (
+                token['path'] is not None or
+                token['warn_cnt'] is not None or
+                token['end'] is not None)
+            if stop and not empty:
+                break
+            print(token)
+            raise ValueError
+        # End if
+    # End loop
+    return token
+
+
+def iterate_warning_messages(path, tokens):
+    """ Iterate over warning messages.
+
+    Return the next token to the caller.
+
+    """
+    while True:
+        token = next(tokens)
+        if token['warn_ln'] is not None:
+            # `warn_ln` and `warn_msg` comes together.
+            line_number = token['warn_ln']
+            message = token['warn_msg']
+            print(path_ln_message(path, line_number, message))
+        else:
+            stop = (
+                token['path'] is not None or
+                token['end'] is not None)
+            if stop:
+                # There may be no complete iteration at all, since a warning
+                # count may be provided without warning messages, as it with
+                # `--warning=-1` (a validator option).
+                break
+            raise ValueError
+    # End loop
+    return token
+
+
+def iterate_error_paths(tokens):
+    """ Iterate over error paths and messages.
+
+    Returns the next token to the caller.
+
+    """
+    empty = True
+    token = next(tokens)
+    while True:
+        # token is read before loop or and the end of an inner loop.
+        if token['path'] is not None:
+            empty = False
+            path = token['path']
+            token = iterate_error_messages(path=path, tokens=tokens)
+        else:
+            raise ValueError
+        # End if
+        stop = token['warn_cnt'] is not None or token['end'] is not None
+        if stop and not empty:
+            break
+        raise ValueError
+    # End loop
+    return token
+
+
+def iterate_warning_paths(tokens):
+    """ Iterate over warning paths and messages.
+
+    Returns the next token to the caller.
+
+    """
+    empty = True
+    token = next(tokens)
+    while True:
+        if token['path'] is not None:
+            empty = False
+            path = token['path']
+            token = iterate_warning_messages(path=path, tokens=tokens)
+        elif token['end'] is not None:
+            break
+        else:
+            raise ValueError
+        # End if
+        stop = token['end'] is not None
+        if stop and not empty:
+            # There may be no complete iteration at all, since a warning
+            # count may be provided without warning messages, as it with
+            # `--warning=-1` (a validator option).
+            break
+        # End if
+        raise ValueError
+    # End loop
+    return token
+
+
+def do_filter():
+    """ Filter from standard input, returning an exit status.
+
+    Not named `filter` since that’s the name of a Python built‑in.
+
+    """
+    no_error = None
+    tokens = matches()
+
+    token = next(tokens)
+
+    # Errors
+    # ------
+
+    if token['err_cnt'] is not None:
+        no_error = False
+        print("Found %s error(s)" % token['err_cnt'])
+        token = iterate_error_paths(tokens=tokens)
+    elif token['no_err'] is not None:
+        no_error = True
+        print("No error.")
+        token = next(tokens)
+    else:
+        raise ValueError
+
+    # Warnings
+    # --------
+
+    if token['warn_cnt'] is not None:
+        print("Found %s warning(s)" % token['warn_cnt'])
+        token = iterate_warning_paths(tokens=tokens)
+
+    # End
+    # ---
+
+    if token['end'] is not None:
+        return 0 if no_error else 1
+    else:
+        # Should not occurs.
+        raise RuntimeError
+
+
+# Entry point
+# ===========
+
+if __name__ == '__main__':
+    status = do_filter()
+    sys.exit(status)
