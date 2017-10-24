@@ -1,6 +1,4 @@
-# css-validator-filter
-
-## IDE / text‑editor filter for the W3C CSS validator
+# IDE / text‑editor filter for the W3C CSS validator
 
 Output filter for `org.w3c.css.css.CssValidator` from `css-validator.jar`.
 
