@@ -2,7 +2,7 @@
 
 ## IDE / text‑editor filter for the W3C CSS validator
 
-Output filer for `org.w3c.css.css.CssValidator` from `css-validator.jar`.
+Output filter for `org.w3c.css.css.CssValidator` from `css-validator.jar`.
 
 Primarly to be used for IDE/text editor integration.
 
