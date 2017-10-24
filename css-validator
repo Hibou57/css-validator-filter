@@ -1,5 +1,12 @@
 #!/bin/sh
 
+for x in "$@"; do
+   if [ "$x" = "" ]; then
+      echo "ERR: got a void argument." >&2
+      exit 1
+   fi
+done
+
 set -o errexit  # Exit with error status on script or command error.
 IFS=  # Don’t word‑split on variable expansion.
 
