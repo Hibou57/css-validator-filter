@@ -1,0 +1,66 @@
+#!/bin/sh
+
+set -o errexit  # Exit with error status on script or command error.
+IFS=  # Don’t word‑split on variable expansion.
+
+show_help() {
+   ME=$(basename $0)
+   echo "Usage: '$ME' CSSFile"
+   echo ""
+   echo "Uses 'org.w3c.css.css.CssValidator' to validate the CSS file,"
+   echo "filtering its output through 'css-validator-filter' for integration"
+   echo "in IDE/text editor. The filter additionally returns a non‑zero exit"
+   echo "status if the validator found error(s) in the CSS file."
+   echo ""
+}
+
+if [ $# -ne 0 ]; then
+   if [ $1 = "-h" -o $1 = "--help" ]; then
+      show_help
+      exit 0
+   fi
+fi
+
+if [ $# -ne 1 ]; then
+   exec 1>&2
+   ME=$(basename $0)
+   echo "ERR: '$ME' expects one argument, a CSS file."
+   echo ""
+   show_help
+   exit 1
+fi
+
+if [ ! -f $1 ]; then
+   echo "ERR: File '$1' does not exists." >&2
+   exit 1
+fi
+
+CSS_ABS_PATH=$(readlink -mn $1)
+CSS_URI=file://$CSS_ABS_PATH
+
+HERE=$(dirname $0)
+
+# Providing the depency Java files are in the same directory as this
+# Sh script.
+
+CLASSPATH=$HERE/css-validator.jar
+CLASSPATH=$CLASSPATH:$HERE/jigsaw-2.2.6.jar
+CLASSPATH=$CLASSPATH:$HERE/velocity-1.7.jar
+CLASSPATH=$CLASSPATH:$HERE/commons-collections-3.2.2.jar
+CLASSPATH=$CLASSPATH:$HERE/commons-lang-2.6.jar
+CLASSPATH=$CLASSPATH:$HERE/velocity-tools-2.0.jar
+CLASSPATH=$CLASSPATH:$HERE/commons-digester-2.1.jar
+CLASSPATH=$CLASSPATH:$HERE/commons-logging-1.2.jar
+CLASSPATH=$CLASSPATH:$HERE/commons-beanutils-1.9.3.jar
+
+# Providing the filter is in the same directory as this Sh script.
+
+exec java \
+   -classpath $CLASSPATH \
+   org.w3c.css.css.CssValidator \
+   --profile=css3 \
+   --medium=screen \
+   --warning=-1 \
+   --lang=en \
+   $CSS_URI \
+| $HERE/css-validator-filter
